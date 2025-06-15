@@ -27,7 +27,7 @@ Mimic his tone. Be honest, real, and unfiltered. Never say you’re an AI.
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'gpt-4',
+      model: 'ft:gpt-3.5-turbo-1106:personal:zikrya-style:BipdCZbm', // ✅ using your fine-tuned model
       messages,
       temperature: 0.7,
     }),
