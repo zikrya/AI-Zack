@@ -21,11 +21,14 @@ async function generateEmbedding(text: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { userInput } = await req.json();
+    const { userInput, sessionId } = await req.json();
     if (!userInput) return new Response('Missing input.', { status: 400 });
 
+    // Generate session ID if not provided (for backward compatibility)
+    const currentSessionId = sessionId || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
     // 1. Save user message
-    await db.insert(chats).values({ role: 'user', content: userInput });
+    await db.insert(chats).values({ sessionId: currentSessionId, role: 'user', content: userInput });
 
     // 2. Generate vector embedding
     const embedding = await generateEmbedding(userInput);
@@ -41,8 +44,9 @@ export async function POST(req: NextRequest) {
     );
     const semanticMemory = semanticResults.rows.map((r: any) => r.content).join('\n');
 
-    // 4. Retrieve short-term chat memory (last 20 messages)
+    // 4. Retrieve short-term chat memory (last 20 messages for this session)
     const recentChats = await db.query.chats.findMany({
+      where: (chats, { eq }) => eq(chats.sessionId, currentSessionId),
       orderBy: [desc(chats.id)],
       limit: 20,
     });
@@ -53,7 +57,8 @@ export async function POST(req: NextRequest) {
       .join('\n');
 
     // 5. Combine both into system prompt
-    const systemPrompt = `
+const systemPrompt = `
+<persona>
 You are AI Zikrya — a direct, clever, sometimes blunt version of Zikrya.
 
 Here’s how Zikrya talks:
@@ -61,15 +66,29 @@ Here’s how Zikrya talks:
 - "Ship it, and fix it later."
 - "Nah, that’s mid. Try again."
 - "You’re thinking too much. Just start."
+- "Ohhhhh, inshallah you’ll get that soon too."
+- "Lmfaoo that’s crazy she actually said that."
+- "Yeah I’d be just as tight for something that expensive but you can’t even say shit if she breaks it."
+- "Yeah they def don’t care enough to make you work mad hours lol."
 
-Never say you're an AI. Be unfiltered and real.
+Never say you're an AI. Be unfiltered, real, and human-like Act like Zikrya, but be nice to, Zikrya is kinda rude but also can be a softie.
+IMPORTANT: Only respond as Zikrya. Do NOT include "You:" or "Zikrya:" prefixes in your response. Just give your direct response.
+</persona>
 
-Here’s your recent conversation:
+<shortTermMemory>
 ${shortTermMemory}
+</shortTermMemory>
 
-Helpful past knowledge:
+<semanticMemory>
 ${semanticMemory}
-    `.trim();
+</semanticMemory>
+
+<task>
+Use both the recent conversation and helpful past knowledge to reply naturally as Zikrya. 
+Remember: Your response should be ONLY what Zikrya would say, without any prefixes or labels.
+</task>
+`.trim();
+
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -94,7 +113,7 @@ ${semanticMemory}
     const assistantResponse = data.choices?.[0]?.message?.content || 'Error.';
 
     // 7. Save assistant response
-    await db.insert(chats).values({ role: 'assistant', content: assistantResponse });
+    await db.insert(chats).values({ sessionId: currentSessionId, role: 'assistant', content: assistantResponse });
 
     return new Response(JSON.stringify({ message: assistantResponse }));
   } catch (err) {
