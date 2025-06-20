@@ -70,7 +70,7 @@ export default function page() {
     if (!input.trim() || !sessionId) return
     setLoading(true)
 
-    const userMessage = { role: "user", content: input }
+    const userMessage: { role: "user" | "assistant"; content: string } = { role: "user", content: input }
     setMessages((prev) => [...prev, userMessage])
     setInput("")
 
@@ -82,7 +82,7 @@ export default function page() {
       })
 
       const data = await res.json()
-      const botMessage = { role: "assistant", content: data.message }
+      const botMessage: { role: "user" | "assistant"; content: string } = { role: "assistant", content: data.message }
 
       setMessages((prev) => [...prev, botMessage])
     } catch (error) {
