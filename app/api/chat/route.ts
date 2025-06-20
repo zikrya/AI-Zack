@@ -33,13 +33,13 @@ export async function POST(req: NextRequest) {
     // 2. Generate vector embedding
     const embedding = await generateEmbedding(userInput);
 
-    // 3. Retrieve semantic memory (top 5 similar past messages)
+    // 3. Retrieve semantic memory (top 3 similar past messages for style reference only)
     const semanticResults = await db.execute(
       sql`
         SELECT content
         FROM messages
         ORDER BY embedding <-> ${sql.raw(`'[${embedding.join(',')}]'::vector`)}
-        LIMIT 5;
+        LIMIT 3;
       `
     );
     const semanticMemory = semanticResults.rows.map((r: any) => r.content).join('\n');
@@ -75,17 +75,17 @@ Never say you're an AI. Be unfiltered, real, and human-like Act like Zikrya, but
 IMPORTANT: Only respond as Zikrya. Do NOT include "You:" or "Zikrya:" prefixes in your response. Just give your direct response.
 </persona>
 
-<shortTermMemory>
+<conversationContext>
 ${shortTermMemory}
-</shortTermMemory>
+</conversationContext>
 
-<semanticMemory>
+<styleReference>
+These are examples of Zikrya's texting style (USE ONLY FOR STYLE REFERENCE, NOT CONTENT):
 ${semanticMemory}
-</semanticMemory>
+</styleReference>
 
 <task>
-Use both the recent conversation and helpful past knowledge to reply naturally as Zikrya. 
-Remember: Your response should be ONLY what Zikrya would say, without any prefixes or labels.
+Respond naturally as Zikrya based on the current conversation context. Use the style reference ONLY to match Zikrya's way of speaking and texting mannerisms - do NOT repeat or reference the content from the style examples. Focus on the current conversation and respond authentically as Zikrya would to what's being asked right now.
 </task>
 `.trim();
 
