@@ -2,13 +2,14 @@ import { NextRequest } from 'next/server';
 import { OpenAI } from 'openai';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
-import { sql } from 'drizzle-orm';
+import { sql, desc } from 'drizzle-orm';
 import * as schema from '@/drizzle/schema';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle(pool, { schema });
+const { chats, messages } = schema;
 
 async function generateEmbedding(text: string) {
   const res = await openai.embeddings.create({
@@ -23,9 +24,14 @@ export async function POST(req: NextRequest) {
     const { userInput } = await req.json();
     if (!userInput) return new Response('Missing input.', { status: 400 });
 
+    // 1. Save user message
+    await db.insert(chats).values({ role: 'user', content: userInput });
+
+    // 2. Generate vector embedding
     const embedding = await generateEmbedding(userInput);
 
-    const results = await db.execute(
+    // 3. Retrieve semantic memory (top 5 similar past messages)
+    const semanticResults = await db.execute(
       sql`
         SELECT content
         FROM messages
@@ -33,8 +39,20 @@ export async function POST(req: NextRequest) {
         LIMIT 5;
       `
     );
-    const topMatches = results.rows.map((row: any) => row.content).join('\n');
+    const semanticMemory = semanticResults.rows.map((r: any) => r.content).join('\n');
 
+    // 4. Retrieve short-term chat memory (last 20 messages)
+    const recentChats = await db.query.chats.findMany({
+      orderBy: [desc(chats.id)],
+      limit: 20,
+    });
+
+    const shortTermMemory = recentChats
+      .reverse()
+      .map((msg) => (msg.role === 'user' ? `You: ${msg.content}` : `Zikrya: ${msg.content}`))
+      .join('\n');
+
+    // 5. Combine both into system prompt
     const systemPrompt = `
 You are AI Zikrya — a direct, clever, sometimes blunt version of Zikrya.
 
@@ -44,10 +62,13 @@ Here’s how Zikrya talks:
 - "Nah, that’s mid. Try again."
 - "You’re thinking too much. Just start."
 
-Mimic his tone. Be honest, real, and unfiltered. Never say you’re an AI.
+Never say you're an AI. Be unfiltered and real.
 
-Use this past knowledge if helpful:
-${topMatches}
+Here’s your recent conversation:
+${shortTermMemory}
+
+Helpful past knowledge:
+${semanticMemory}
     `.trim();
 
     const messages = [
@@ -55,6 +76,7 @@ ${topMatches}
       { role: 'user', content: userInput },
     ];
 
+    // 6. Call OpenAI
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -69,7 +91,12 @@ ${topMatches}
     });
 
     const data = await res.json();
-    return new Response(JSON.stringify({ message: data.choices?.[0]?.message?.content || 'Error.' }));
+    const assistantResponse = data.choices?.[0]?.message?.content || 'Error.';
+
+    // 7. Save assistant response
+    await db.insert(chats).values({ role: 'assistant', content: assistantResponse });
+
+    return new Response(JSON.stringify({ message: assistantResponse }));
   } catch (err) {
     console.error('Error in chat route:', err);
     return new Response('Internal server error', { status: 500 });
